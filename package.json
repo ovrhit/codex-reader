@@ -1,0 +1,55 @@
+{
+  "name": "codex-reader",
+  "version": "1.0.0",
+  "description": "CODEX — 학술 문헌 읽기 아카이브 (로컬 전용 데스크톱 앱)",
+  "main": "main.js",
+  "private": true,
+  "author": "chomj",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win",
+    "dist:installer": "electron-builder --win nsis",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "local.codex.reader",
+    "productName": "CODEX",
+    "copyright": "CODEX — local reading archive",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CODEX",
+      "artifactName": "CODEX-Setup-${version}.${ext}",
+      "uninstallDisplayName": "CODEX"
+    },
+    "portable": {
+      "artifactName": "CODEX-Portable-${version}.${ext}"
+    }
+  }
+}

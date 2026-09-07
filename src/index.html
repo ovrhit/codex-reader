@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob: https:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'" />
+  <title>CODEX</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <!-- 커스텀 타이틀바 -->
+  <header class="titlebar">
+    <div class="tb-drag">
+      <div class="tb-brand">
+        <svg class="tb-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 4.5h6.2c1 0 1.8.8 1.8 1.8V20a1.6 1.6 0 0 0-1.6-1.6H4z"/>
+          <path d="M20 4.5h-6.2c-1 0-1.8.8-1.8 1.8V20a1.6 1.6 0 0 1 1.6-1.6H20z"/>
+        </svg>
+        <span class="tb-name">CODEX</span>
+        <span class="tb-sub">READING ARCHIVE</span>
+      </div>
+    </div>
+    <div class="tb-controls">
+      <button class="tb-btn" id="btn-min" title="최소화" aria-label="최소화"><span class="ic-min"></span></button>
+      <button class="tb-btn" id="btn-max" title="최대화" aria-label="최대화"><span class="ic-max"></span></button>
+      <button class="tb-btn danger" id="btn-close" title="닫기" aria-label="닫기"><span class="ic-close"></span></button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- 사이드바 -->
+    <nav class="sidebar">
+      <button class="nav-item active" data-view="library">
+        <svg viewBox="0 0 24 24" class="nav-ic"><path d="M4 5h4v14H4zM10 5h4v14h-4zM16.5 5.6l3.4.9-3.2 12.6-3.4-.9z"/></svg>
+        <span>서재</span>
+      </button>
+      <button class="nav-item" data-view="stats">
+        <svg viewBox="0 0 24 24" class="nav-ic"><path d="M4 19h16M6.5 16V9M11 16V5M15.5 16v-5M20 16v-2"/></svg>
+        <span>통계</span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24" class="nav-ic"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M4.2 7.5l1.9 1.1M17.9 15.4l1.9 1.1M4.2 16.5l1.9-1.1M17.9 8.6l1.9-1.1"/></svg>
+        <span>설정</span>
+      </button>
+
+      <div class="nav-spacer"></div>
+
+      <div class="nav-stat" id="nav-stat">
+        <div class="nav-stat-ring"><svg viewBox="0 0 44 44"><circle class="r-bg" cx="22" cy="22" r="18"/><circle class="r-fg" cx="22" cy="22" r="18"/></svg><b id="nav-stat-pct">0%</b></div>
+        <div class="nav-stat-label">완독률</div>
+      </div>
+
+      <button class="add-fab" id="btn-add">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span>등록</span>
+      </button>
+    </nav>
+
+    <!-- 본문 -->
+    <main class="content" id="content"></main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
