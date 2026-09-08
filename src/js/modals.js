@@ -1,7 +1,7 @@
 // 문헌 등록·편집 모달, 온라인 검색, 목차 편집기
 'use strict';
 
-import { $, $$, esc, uid, modal, toast, ICON, initials, mountImageFallbacks } from './util.js';
+import { $, $$, esc, uid, modal, toast, ICON, initials, mountImageFallbacks, cleanErr } from './util.js';
 import { allTags, parseTOC, normalizeChapter, chapterPages } from './store.js';
 import { rowsFromPages, rowsToText, summarize } from './toc-ocr.js';
 
@@ -516,16 +516,39 @@ async function mountOcr(m, ta, refresh) {
       aiBtn.disabled = true;
       const all = [];
       const failed = [];
-      for (let i = 0; i < files.length; i++) {
-        status.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px"></span> AI ${i + 1}/${files.length} — ${esc(files[i].name)} 읽는 중…`;
-        try {
-          const r = await api.ai.extractTOC(files[i].path);
-          all.push(...r.entries.map(e => ({ title: e.title, level: e.level, page: e.from == null ? '' : String(e.from), to: e.to })));
-        } catch (e) {
-          failed.push(`${files[i].name}: ${e.message}`);
+
+      // 한도 초과로 대기 중이면 남은 시간을 세어 보여 준다 (멈춘 것처럼 보이지 않게).
+      let countdown = null;
+      const stopCountdown = () => { if (countdown) { clearInterval(countdown); countdown = null; } };
+      const offProgress = api.ai.onProgress(info => {
+        if (info?.status !== 429) return;
+        stopCountdown();
+        let left = Math.ceil((info.waitMs || 0) / 1000);
+        const tick = () => {
+          status.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px"></span> `
+            + `요청 한도 초과 — ${Math.max(0, left)}초 뒤 자동 재시도`;
+          if (--left < 0) stopCountdown();
+        };
+        tick();
+        countdown = setInterval(tick, 1000);
+      });
+
+      try {
+        for (let i = 0; i < files.length; i++) {
+          stopCountdown();
+          status.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px"></span> AI ${i + 1}/${files.length} — ${esc(files[i].name)} 읽는 중…`;
+          try {
+            const r = await api.ai.extractTOC(files[i].path);
+            all.push(...r.entries.map(e => ({ title: e.title, level: e.level, page: e.from == null ? '' : String(e.from), to: e.to })));
+          } catch (e) {
+            failed.push(`${files[i].name}: ${cleanErr(e)}`);
+          }
         }
+      } finally {
+        stopCountdown();
+        offProgress();
+        aiBtn.disabled = false;
       }
-      aiBtn.disabled = false;
 
       if (!all.length) {
         status.textContent = 'AI 인식 실패';

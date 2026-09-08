@@ -264,7 +264,9 @@ const aiToc = require('./ai-toc');
 ipcMain.handle('ai:getConfig', () => aiToc.publicConfig());
 ipcMain.handle('ai:setConfig', (_e, cfg) => aiToc.saveConfig(cfg || {}));
 ipcMain.handle('ai:test', () => aiToc.testConnection());
-ipcMain.handle('ai:extractTOC', (_e, p) => aiToc.extractTOC(p));
+// 한도 초과로 기다리는 동안 화면이 멈춘 것처럼 보이지 않도록 진행 상황을 알린다.
+ipcMain.handle('ai:extractTOC', (e, p) =>
+  aiToc.extractTOC(p, info => { if (!e.sender.isDestroyed()) e.sender.send('ai:progress', info); }));
 
 // ─── IPC: 온라인 문헌 검색 (전부 선택 기능 · 실패해도 수동 입력 가능) ──────
 const UA = 'CODEX-Reader/1.0 (local desktop reading tracker)';

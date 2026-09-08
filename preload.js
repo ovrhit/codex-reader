@@ -38,7 +38,13 @@ contextBridge.exposeInMainWorld('codex', {
     getConfig: () => ipcRenderer.invoke('ai:getConfig'),
     setConfig: (cfg) => ipcRenderer.invoke('ai:setConfig', cfg),
     test: () => ipcRenderer.invoke('ai:test'),
-    extractTOC: (path) => ipcRenderer.invoke('ai:extractTOC', path)
+    extractTOC: (path) => ipcRenderer.invoke('ai:extractTOC', path),
+    // 한도 초과로 재시도를 기다리는 중이라는 알림
+    onProgress: (cb) => {
+      const h = (_e, info) => cb(info);
+      ipcRenderer.on('ai:progress', h);
+      return () => ipcRenderer.removeListener('ai:progress', h);
+    }
   },
   shell: {
     openPath: (p) => ipcRenderer.invoke('shell:openPath', p),

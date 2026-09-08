@@ -40,6 +40,18 @@ export function daysBetween(a, b) {
   return isNaN(d) ? null : Math.max(0, Math.round(d));
 }
 
+/**
+ * IPC 를 건너온 오류는 Electron 이 앞에 껍데기를 씌운다.
+ *   "Error invoking remote method 'ai:extractTOC': Error: 진짜 메시지"
+ * 사용자에게는 진짜 메시지만 보여 준다.
+ */
+export function cleanErr(e) {
+  let m = (e && e.message) || String(e || '');
+  m = m.replace(/^Error invoking remote method '[^']*':\s*/, '');
+  m = m.replace(/^(?:Uncaught\s+)?(?:\w*Error):\s*/, '');
+  return m.trim() || '알 수 없는 오류';
+}
+
 export function initials(title) {
   const t = String(title || '').trim();
   if (!t) return '·';

@@ -204,30 +204,101 @@ function normalizeEntries(parsed) {
     .filter(e => e.title);
 }
 
-async function httpJSON(url, opts, timeout = 120000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeout);
-  try {
-    const res = await fetch(url, { ...opts, signal: ctrl.signal });
-    const body = await res.text();
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try {
-        const j = JSON.parse(body);
-        msg = j?.error?.message || j?.error?.type || j?.message || msg;
-      } catch { if (body) msg += ` — ${body.slice(0, 200)}`; }
-      const err = new Error(msg);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/**
+ * 429 응답에서 "몇 초 뒤에 다시 오라"는 값을 찾아낸다.
+ * Retry-After 헤더(초 또는 HTTP 날짜)와 Google 의 RetryInfo(details[].retryDelay: "27s")를
+ * 모두 본다. 알 수 없으면 null.
+ */
+function retryDelayMs(res, parsed) {
+  const h = res.headers.get('retry-after');
+  if (h) {
+    const secs = Number(h);
+    if (Number.isFinite(secs)) return secs * 1000;
+    const when = Date.parse(h);
+    if (!Number.isNaN(when)) return Math.max(0, when - Date.now());
+  }
+  for (const d of (parsed?.error?.details || [])) {
+    const m = String(d?.retryDelay || '').match(/^([\d.]+)s$/);
+    if (m) return Math.round(parseFloat(m[1]) * 1000);
+  }
+  return null;
+}
+
+/** 업체 영문 오류를 사람이 바로 알아볼 수 있는 문장으로 바꾼다. */
+function friendlyError(status, raw, waitMs) {
+  if (status === 429) {
+    const s = waitMs ? Math.ceil(waitMs / 1000) : null;
+    return '요청 한도를 넘었습니다. '
+      + (s ? `약 ${s}초 뒤에 다시 시도하세요.` : '잠시 뒤에 다시 시도하세요.')
+      + ' (무료 티어는 분당·하루 호출 횟수가 정해져 있습니다)';
+  }
+  if (status === 401 || status === 403) {
+    return 'API 키가 거부되었습니다. 키가 맞는지, 해당 모델을 쓸 권한이 있는지 확인하세요.';
+  }
+  if (status === 404) {
+    return `모델 또는 주소를 찾을 수 없습니다. 모델 이름을 확인하세요. (${raw})`;
+  }
+  if (status === 400) return `요청이 거부되었습니다: ${raw}`;
+  if (status >= 500) return `업체 서버 오류입니다 (${status}). 잠시 뒤에 다시 시도하세요.`;
+  return raw || `HTTP ${status}`;
+}
+
+/**
+ * 한도 초과(429)와 일시적 서버 오류(5xx)는 서버가 알려준 시간만큼 기다렸다가
+ * 자동으로 한 번 더 시도한다. 무료 티어는 분당 10~15회라 사진 여러 장을 연달아
+ * 넣으면 중간에 걸릴 수 있는데, 그때 사용자가 처음부터 다시 하지 않아도 되게 한다.
+ */
+async function httpJSON(url, opts, { timeout = 120000, retries = 2, maxWaitMs = 65000, onRetry = null } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const res = await fetch(url, { ...opts, signal: ctrl.signal });
+      const body = await res.text();
+      if (res.ok) return JSON.parse(body);
+
+      let parsed = null;
+      try { parsed = JSON.parse(body); } catch { /* 본문이 JSON 이 아닐 수도 있다 */ }
+      const raw = parsed?.error?.message || parsed?.error?.type || parsed?.message
+                || (body ? body.slice(0, 200) : `HTTP ${res.status}`);
+
+      const retryable = res.status === 429 || res.status >= 500;
+      const waitMs = res.status === 429 ? retryDelayMs(res, parsed) : 1500 * (attempt + 1);
+
+      if (retryable && attempt < retries && waitMs != null && waitMs <= maxWaitMs) {
+        if (onRetry) onRetry({ status: res.status, waitMs, attempt: attempt + 1, retries });
+        await sleep(waitMs);
+        continue;
+      }
+      const err = new Error(friendlyError(res.status, raw, waitMs));
       err.status = res.status;
+      err.retryAfterMs = res.status === 429 ? waitMs : null;
       throw err;
-    }
-    return JSON.parse(body);
-  } finally { clearTimeout(t); }
+    } catch (e) {
+      clearTimeout(t);
+      if (e?.name === 'AbortError') {
+        lastErr = new Error('응답이 너무 오래 걸려 중단했습니다. 네트워크를 확인하세요.');
+      } else if (e instanceof TypeError) {
+        // fetch 자체가 실패 — 네트워크 단절, DNS, 잘못된 Base URL 등
+        lastErr = new Error('서버에 연결하지 못했습니다. 인터넷 연결과 Base URL 을 확인하세요.');
+      } else {
+        throw e;
+      }
+      if (attempt >= retries) throw lastErr;
+      await sleep(1500 * (attempt + 1));
+      continue;
+    } finally { clearTimeout(t); }
+  }
+  throw lastErr || new Error('요청에 실패했습니다.');
 }
 
 // ─── provider 별 호출 ───────────────────────────────────────────────────────
 
 // Gemini — Interactions API (v1beta). 구조화 출력을 스키마로 강제할 수 있다.
-async function callGemini({ apiKey, model, image }) {
+async function callGemini({ apiKey, model, image, onRetry }) {
   const data = await httpJSON('https://generativelanguage.googleapis.com/v1beta/interactions', {
     method: 'POST',
     headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
@@ -239,7 +310,7 @@ async function callGemini({ apiKey, model, image }) {
       ],
       response_format: { type: 'text', mime_type: 'application/json', schema: TOC_SCHEMA }
     })
-  });
+  }, { onRetry });
 
   // 응답은 steps[].content[] 구조. output_text 가 있으면 그걸 우선 쓴다.
   if (typeof data?.output_text === 'string' && data.output_text.trim()) return data.output_text;
@@ -254,7 +325,7 @@ async function callGemini({ apiKey, model, image }) {
 }
 
 // Anthropic Claude — Messages API
-async function callClaude({ apiKey, model, image }) {
+async function callClaude({ apiKey, model, image, onRetry }) {
   const data = await httpJSON('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -276,14 +347,14 @@ async function callClaude({ apiKey, model, image }) {
         ]
       }]
     })
-  });
+  }, { onRetry });
   const text = (data?.content || []).filter(b => b?.type === 'text').map(b => b.text).join('\n');
   if (!text) throw new Error('Claude 응답에서 텍스트를 찾지 못했습니다.');
   return text;
 }
 
 // OpenAI 호환 (xAI Grok, OpenAI, OpenRouter, Groq …)
-async function callOpenAICompatible({ apiKey, model, image, baseUrl }) {
+async function callOpenAICompatible({ apiKey, model, image, baseUrl, onRetry }) {
   const base = (baseUrl || '').replace(/\/+$/, '');
   if (!base) throw new Error('Base URL 을 입력해야 합니다. (예: https://api.x.ai/v1)');
   if (!model) throw new Error('모델 이름을 입력해야 합니다.');
@@ -305,7 +376,7 @@ async function callOpenAICompatible({ apiKey, model, image, baseUrl }) {
         }
       ]
     })
-  });
+  }, { onRetry });
   const text = data?.choices?.[0]?.message?.content;
   if (!text) throw new Error('응답에서 텍스트를 찾지 못했습니다.');
   return text;
@@ -314,7 +385,7 @@ async function callOpenAICompatible({ apiKey, model, image, baseUrl }) {
 const CALLERS = { gemini: callGemini, claude: callClaude, openai: callOpenAICompatible };
 
 // ─── 공개 API ───────────────────────────────────────────────────────────────
-async function extractTOC(imgPath) {
+async function extractTOC(imgPath, onProgress) {
   const c = readConfig();
   const apiKey = decryptKey(c);
   if (!apiKey) throw new Error('API 키가 설정되지 않았습니다. 설정 화면에서 먼저 등록하세요.');
@@ -324,7 +395,7 @@ async function extractTOC(imgPath) {
 
   const image = await imageToBase64(imgPath);
   const model = c.model || PROVIDERS[c.provider].defaultModel;
-  const text = await caller({ apiKey, model, image, baseUrl: c.baseUrl });
+  const text = await caller({ apiKey, model, image, baseUrl: c.baseUrl, onRetry: onProgress });
   const entries = normalizeEntries(extractJSON(text));
   if (!entries.length) throw new Error('목차 항목을 하나도 찾지 못했습니다. 다른 사진으로 시도해 보세요.');
   return { file: path.basename(imgPath), provider: c.provider, model, entries };

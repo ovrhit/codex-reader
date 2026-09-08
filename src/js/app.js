@@ -1,7 +1,7 @@
 // 화면 구성 · 라우팅
 'use strict';
 
-import { $, $$, esc, fmtDate, daysBetween, toast, confirmDialog, ensureDefs, coverHTML, mountImageFallbacks, ICON } from './util.js';
+import { $, $$, esc, fmtDate, daysBetween, toast, confirmDialog, ensureDefs, coverHTML, mountImageFallbacks, cleanErr, ICON } from './util.js';
 import {
   state, loadDB, save, flush, resolveCovers, getWork, addWork, deleteWork,
   progressOf, syncStatus, setStatus, toggleChapter, allTags, visibleWorks, computeStats,
@@ -860,7 +860,7 @@ async function wireAiSettings() {
         ? (cfg.encrypted ? '저장 완료 · OS 암호화 적용' : '저장 완료 · 암호화 불가 환경')
         : '키 없음 — 기능 꺼짐';
       toast('AI 설정을 저장했습니다.', 'ok');
-    } catch (e) { toast('저장 실패: ' + e.message, 'err'); }
+    } catch (e) { toast('저장 실패: ' + cleanErr(e), 'err'); }
   };
 
   $('[data-aitest]', panel).onclick = async (ev) => {
@@ -873,7 +873,7 @@ async function wireAiSettings() {
       toast('연결에 성공했습니다.', 'ok');
     } catch (e) {
       status.textContent = '연결 실패';
-      toast('연결 실패: ' + e.message, 'err');
+      toast('연결 실패: ' + cleanErr(e), 'err');
     } finally { b.disabled = false; }
   };
 
