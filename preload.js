@@ -33,6 +33,13 @@ contextBridge.exposeInMainWorld('codex', {
     pickImages: () => ipcRenderer.invoke('ocr:pickImages'),
     recognize: (path, lang) => ipcRenderer.invoke('ocr:recognize', { path, lang })
   },
+  ai: {
+    // 키 자체는 절대 렌더러로 돌아오지 않는다 (설정 여부와 꼬리 4자리만).
+    getConfig: () => ipcRenderer.invoke('ai:getConfig'),
+    setConfig: (cfg) => ipcRenderer.invoke('ai:setConfig', cfg),
+    test: () => ipcRenderer.invoke('ai:test'),
+    extractTOC: (path) => ipcRenderer.invoke('ai:extractTOC', path)
+  },
   shell: {
     openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
     openExternal: (u) => ipcRenderer.invoke('shell:openExternal', u)

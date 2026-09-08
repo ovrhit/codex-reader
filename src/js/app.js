@@ -687,6 +687,46 @@ function renderSettings() {
       </div>
     </div>
 
+    <div class="panel mb" data-aipanel>
+      <div class="panel-head">
+        <span class="panel-title">AI TOC READER</span>
+        <span class="muted" style="font-size:11px">선택 기능 · 내 API 키 사용</span>
+      </div>
+      <div class="notice mb">
+        목차 사진을 AI 비전 모델이 읽어 정확한 목차를 만들어 줍니다. Windows 내장 OCR 보다 훨씬 정확하지만,
+        <b>목차 페이지 이미지가 해당 업체 서버로 전송됩니다.</b> 키를 넣지 않으면 이 기능은 꺼진 채로 남고,
+        Windows OCR 과 수동 입력은 그대로 쓸 수 있습니다.
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label>PROVIDER</label>
+          <select data-aiprovider></select>
+          <div class="hint" data-ainote></div>
+        </div>
+        <div class="field">
+          <label>MODEL</label>
+          <input type="text" data-aimodel list="ai-models" placeholder="모델 이름" />
+          <datalist id="ai-models"></datalist>
+        </div>
+        <div class="field full" data-aibaseurlwrap hidden>
+          <label>BASE URL</label>
+          <input type="text" data-aibaseurl placeholder="https://api.x.ai/v1" />
+        </div>
+        <div class="field full">
+          <label>API KEY</label>
+          <input type="password" data-aikey placeholder="키를 붙여넣으세요" autocomplete="off" />
+          <div class="hint" data-aikeyhint></div>
+        </div>
+      </div>
+      <div class="row wrap mt">
+        <button class="btn sm primary" data-aisave>${ICON.check}저장</button>
+        <button class="btn sm" data-aitest>${ICON.spark}연결 테스트</button>
+        <button class="btn sm ghost danger" data-aiclear>${ICON.trash}키 삭제</button>
+        <a class="link" data-aikeylink hidden>키 발급 페이지 열기</a>
+        <span class="muted grow" style="font-size:11.5px;text-align:right" data-aistatus></span>
+      </div>
+    </div>
+
     <div class="panel mb">
       <div class="panel-head"><span class="panel-title">ONLINE LOOKUP</span></div>
       <div class="notice">
@@ -716,6 +756,7 @@ function renderSettings() {
   </div>`;
 
   $('[data-openfolder]').onclick = () => api.shell.openPath(state.paths.data);
+  wireAiSettings();
 
   $('[data-export]').onclick = async () => {
     await flush();
@@ -754,6 +795,99 @@ function renderSettings() {
     await save(); await flush();
     toast('서재를 비웠습니다.');
     go('library');
+  };
+}
+
+// ─── 설정: AI 목차 인식 ─────────────────────────────────────────────────────
+async function wireAiSettings() {
+  const panel = $('[data-aipanel]');
+  if (!panel) return;
+
+  let cfg;
+  try { cfg = await api.ai.getConfig(); }
+  catch (e) { panel.remove(); return; }
+
+  const provSel = $('[data-aiprovider]', panel);
+  const modelInp = $('[data-aimodel]', panel);
+  const baseWrap = $('[data-aibaseurlwrap]', panel);
+  const baseInp = $('[data-aibaseurl]', panel);
+  const keyInp = $('[data-aikey]', panel);
+  const keyHint = $('[data-aikeyhint]', panel);
+  const note = $('[data-ainote]', panel);
+  const status = $('[data-aistatus]', panel);
+  const keyLink = $('[data-aikeylink]', panel);
+  const datalist = $('#ai-models', panel);
+
+  const P = cfg.providers || {};
+  provSel.innerHTML = Object.entries(P)
+    .map(([id, p]) => `<option value="${esc(id)}" ${cfg.provider === id ? 'selected' : ''}>${esc(p.label)}${p.free ? ' — 무료 티어' : ''}</option>`)
+    .join('');
+
+  function paint() {
+    const id = provSel.value;
+    const p = P[id] || {};
+    note.textContent = p.note || '';
+    keyHint.textContent = p.keyHint || '';
+    baseWrap.hidden = !p.needsBaseUrl;
+    datalist.innerHTML = (p.models || []).map(mm => `<option value="${esc(mm)}"></option>`).join('');
+    keyLink.hidden = !p.keyUrl;
+    keyLink.onclick = p.keyUrl ? () => api.shell.openExternal(p.keyUrl) : null;
+    if (id !== cfg.provider) modelInp.value = p.defaultModel || '';
+  }
+
+  modelInp.value = cfg.model || '';
+  baseInp.value = cfg.baseUrl || '';
+  keyInp.placeholder = cfg.hasKey ? `저장됨 ····${cfg.keyTail} (바꾸려면 새 키 입력)` : '키를 붙여넣으세요';
+  status.textContent = cfg.hasKey
+    ? (cfg.encrypted ? '키 저장됨 · OS 암호화 적용' : '키 저장됨 · 암호화 불가 환경')
+    : '키 없음 — 기능 꺼짐';
+  paint();
+  provSel.onchange = paint;
+
+  $('[data-aisave]', panel).onclick = async () => {
+    const payload = {
+      provider: provSel.value,
+      model: modelInp.value.trim(),
+      baseUrl: baseInp.value.trim()
+    };
+    // 빈 칸이면 기존 키를 그대로 둔다 (실수로 지우지 않도록)
+    if (keyInp.value.trim()) payload.apiKey = keyInp.value.trim();
+    try {
+      cfg = await api.ai.setConfig(payload);
+      keyInp.value = '';
+      keyInp.placeholder = cfg.hasKey ? `저장됨 ····${cfg.keyTail} (바꾸려면 새 키 입력)` : '키를 붙여넣으세요';
+      status.textContent = cfg.hasKey
+        ? (cfg.encrypted ? '저장 완료 · OS 암호화 적용' : '저장 완료 · 암호화 불가 환경')
+        : '키 없음 — 기능 꺼짐';
+      toast('AI 설정을 저장했습니다.', 'ok');
+    } catch (e) { toast('저장 실패: ' + e.message, 'err'); }
+  };
+
+  $('[data-aitest]', panel).onclick = async (ev) => {
+    const b = ev.currentTarget;
+    b.disabled = true;
+    status.innerHTML = '<span class="spinner" style="display:inline-block;vertical-align:-3px"></span> 연결 확인 중…';
+    try {
+      const r = await api.ai.test();
+      status.textContent = `연결 OK · ${r.model} · ${r.ms}ms`;
+      toast('연결에 성공했습니다.', 'ok');
+    } catch (e) {
+      status.textContent = '연결 실패';
+      toast('연결 실패: ' + e.message, 'err');
+    } finally { b.disabled = false; }
+  };
+
+  $('[data-aiclear]', panel).onclick = async () => {
+    const ok = await confirmDialog({
+      title: 'API 키 삭제', danger: true, okText: '삭제',
+      message: '저장된 API 키를 지웁니다. AI 목차 인식이 꺼지고, Windows OCR 과 수동 입력만 남습니다.'
+    });
+    if (!ok) return;
+    cfg = await api.ai.setConfig({ apiKey: '' });
+    keyInp.value = '';
+    keyInp.placeholder = '키를 붙여넣으세요';
+    status.textContent = '키 없음 — 기능 꺼짐';
+    toast('키를 삭제했습니다.');
   };
 }
 

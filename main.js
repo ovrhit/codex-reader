@@ -258,6 +258,14 @@ ipcMain.handle('ocr:pickImages', async () => {
 // 한 장씩 처리한다 — 렌더러가 순회하며 진행 상황을 보여줄 수 있도록.
 ipcMain.handle('ocr:recognize', (_e, { path: p, lang }) => ocrEngine.recognizeFile(p, lang || 'ko'));
 
+// ─── IPC: AI 비전 모델로 목차 읽기 (선택 기능 · 사용자 API 키 필요) ─────────
+const aiToc = require('./ai-toc');
+
+ipcMain.handle('ai:getConfig', () => aiToc.publicConfig());
+ipcMain.handle('ai:setConfig', (_e, cfg) => aiToc.saveConfig(cfg || {}));
+ipcMain.handle('ai:test', () => aiToc.testConnection());
+ipcMain.handle('ai:extractTOC', (_e, p) => aiToc.extractTOC(p));
+
 // ─── IPC: 온라인 문헌 검색 (전부 선택 기능 · 실패해도 수동 입력 가능) ──────
 const UA = 'CODEX-Reader/1.0 (local desktop reading tracker)';
 

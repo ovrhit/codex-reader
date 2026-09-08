@@ -87,6 +87,10 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* .btn / .field 등에 display 를 지정해 두면 UA 스타일시트의 [hidden] 을 덮어써서
+   hidden 속성이 먹지 않는다. 클래스보다 우선하도록 못 박아 둔다. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   overflow: hidden;
