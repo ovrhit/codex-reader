@@ -243,10 +243,28 @@ function pathToFileURL(p) {
   return 'file:///' + p.replace(/\\/g, '/').replace(/#/g, '%23').replace(/\?/g, '%3F');
 }
 
+// ─── 선택 기능 모듈 ─────────────────────────────────────────────────────────
+// 이 세 개는 없어도 앱의 핵심(서재·목차·진척도)은 돌아간다. 그래서 하나가 로드에
+// 실패해도 나머지까지 끌고 죽지 않게 격리한다. 예전에 패키징 설정에서 이 파일들이
+// 빠졌을 때, require 가 던지면서 그 아래 IPC 등록이 통째로 중단돼 앱이 조용히
+// 반쯤 망가진 적이 있다.
+function loadFeature(mod, label) {
+  try { return require(mod); }
+  catch (err) {
+    console.error(`[CODEX] 선택 기능 로드 실패 (${label}): ${err.message}`);
+    return null;
+  }
+}
+function need(mod, label) {
+  if (!mod) throw new Error(`${label} 기능을 불러오지 못했습니다. 설치가 손상되었을 수 있습니다.`);
+  return mod;
+}
+
 // ─── IPC: 목차 이미지 OCR (Windows 내장 엔진 · 오프라인) ────────────────────
-const ocrEngine = require('./ocr');
+const ocrEngine = loadFeature('./ocr', 'OCR');
 
 ipcMain.handle('ocr:languages', async () => {
+  if (!ocrEngine) return [];
   try { return await ocrEngine.availableLanguages(); }
   catch { return []; }   // OCR 을 못 쓰는 환경이면 빈 목록 → UI 에서 버튼을 숨긴다
 });
@@ -262,28 +280,29 @@ ipcMain.handle('ocr:pickImages', async () => {
 });
 
 // 한 장씩 처리한다 — 렌더러가 순회하며 진행 상황을 보여줄 수 있도록.
-ipcMain.handle('ocr:recognize', (_e, { path: p, lang }) => ocrEngine.recognizeFile(p, lang || 'ko'));
+ipcMain.handle('ocr:recognize', (_e, { path: p, lang }) => need(ocrEngine, 'OCR').recognizeFile(p, lang || 'ko'));
 
 // ─── IPC: AI 비전 모델로 목차 읽기 (선택 기능 · 사용자 API 키 필요) ─────────
-const aiToc = require('./ai-toc');
+const aiToc = loadFeature('./ai-toc', 'AI 목차 인식');
 
-ipcMain.handle('ai:getConfig', () => aiToc.publicConfig());
-ipcMain.handle('ai:setConfig', (_e, cfg) => aiToc.saveConfig(cfg || {}));
-ipcMain.handle('ai:test', () => aiToc.testConnection());
+ipcMain.handle('ai:getConfig', () => aiToc ? aiToc.publicConfig() : { provider: '', model: '', hasKey: false, providers: {} });
+ipcMain.handle('ai:setConfig', (_e, cfg) => need(aiToc, 'AI 목차 인식').saveConfig(cfg || {}));
+ipcMain.handle('ai:test', () => need(aiToc, 'AI 목차 인식').testConnection());
 // 한도 초과로 기다리는 동안 화면이 멈춘 것처럼 보이지 않도록 진행 상황을 알린다.
 ipcMain.handle('ai:extractTOC', (e, p) =>
-  aiToc.extractTOC(p, info => { if (!e.sender.isDestroyed()) e.sender.send('ai:progress', info); }));
+  need(aiToc, 'AI 목차 인식').extractTOC(p, info => { if (!e.sender.isDestroyed()) e.sender.send('ai:progress', info); }));
 
 // ─── IPC: 옵시디언 볼트 연동 (선택 기능) ────────────────────────────────────
-const obsidian = require('./obsidian');
+const obsidian = loadFeature('./obsidian', '옵시디언 연동');
 
-ipcMain.handle('obs:status', () => obsidian.status());
-ipcMain.handle('obs:setConfig', (_e, cfg) => obsidian.setConfig(cfg || {}));
-ipcMain.handle('obs:pickVault', () => obsidian.pickVault());
-ipcMain.handle('obs:listNotes', (_e, opts) => obsidian.listNotes(opts || {}));
-ipcMain.handle('obs:readNote', (_e, rel) => obsidian.readNote(rel));
-ipcMain.handle('obs:createNote', (_e, payload) => obsidian.createChapterNote(payload || {}));
-ipcMain.handle('obs:openNote', (_e, rel) => obsidian.openNote(rel));
+ipcMain.handle('obs:status', () => obsidian ? obsidian.status()
+  : { vaultPath: '', vaultName: '', subfolder: '', linked: false, writable: false, detected: [] });
+ipcMain.handle('obs:setConfig', (_e, cfg) => need(obsidian, '옵시디언 연동').setConfig(cfg || {}));
+ipcMain.handle('obs:pickVault', () => need(obsidian, '옵시디언 연동').pickVault());
+ipcMain.handle('obs:listNotes', (_e, opts) => need(obsidian, '옵시디언 연동').listNotes(opts || {}));
+ipcMain.handle('obs:readNote', (_e, rel) => need(obsidian, '옵시디언 연동').readNote(rel));
+ipcMain.handle('obs:createNote', (_e, payload) => need(obsidian, '옵시디언 연동').createChapterNote(payload || {}));
+ipcMain.handle('obs:openNote', (_e, rel) => need(obsidian, '옵시디언 연동').openNote(rel));
 
 // ─── IPC: 온라인 문헌 검색 (전부 선택 기능 · 실패해도 수동 입력 가능) ──────
 const UA = 'CODEX-Reader/1.0 (local desktop reading tracker)';
