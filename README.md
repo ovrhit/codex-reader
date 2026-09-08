@@ -219,8 +219,8 @@ npm run dist
 
 | 파일 | 설명 |
 |---|---|
-| `CODEX-Setup-1.0.0.exe` | 설치 관리자 (설치 경로 선택 · 바탕화면/시작 메뉴 바로가기 · 제거 지원, 관리자 권한 불필요) |
-| `CODEX-Portable-1.0.0.exe` | 설치 없이 바로 실행하는 포터블 실행 파일 |
+| `CODEX-Setup-<버전>.exe` | 설치 관리자 (설치 경로 선택 · 바탕화면/시작 메뉴 바로가기 · 제거 지원, 관리자 권한 불필요) |
+| `CODEX-Portable-<버전>.exe` | 설치 없이 바로 실행하는 포터블 실행 파일 |
 
 설치 관리자만 / 포터블만 만들려면 `npm run dist:installer` 또는 `npm run dist:portable` 을 씁니다.
 

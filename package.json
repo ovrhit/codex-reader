@@ -1,6 +1,6 @@
 {
   "name": "codex-reader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "CODEX — 학술 문헌 읽기 아카이브 (로컬 전용 데스크톱 앱)",
   "main": "main.js",
   "private": true,
@@ -33,8 +33,18 @@
     "win": {
       "icon": "build/icon.ico",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
