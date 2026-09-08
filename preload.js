@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld('codex', {
     books: (q) => ipcRenderer.invoke('search:books', q),
     toc: (payload) => ipcRenderer.invoke('search:toc', payload)
   },
+  ocr: {
+    languages: () => ipcRenderer.invoke('ocr:languages'),
+    pickImages: () => ipcRenderer.invoke('ocr:pickImages'),
+    recognize: (path, lang) => ipcRenderer.invoke('ocr:recognize', { path, lang })
+  },
   shell: {
     openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
     openExternal: (u) => ipcRenderer.invoke('shell:openExternal', u)

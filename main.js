@@ -237,6 +237,27 @@ function pathToFileURL(p) {
   return 'file:///' + p.replace(/\\/g, '/').replace(/#/g, '%23').replace(/\?/g, '%3F');
 }
 
+// ─── IPC: 목차 이미지 OCR (Windows 내장 엔진 · 오프라인) ────────────────────
+const ocrEngine = require('./ocr');
+
+ipcMain.handle('ocr:languages', async () => {
+  try { return await ocrEngine.availableLanguages(); }
+  catch { return []; }   // OCR 을 못 쓰는 환경이면 빈 목록 → UI 에서 버튼을 숨긴다
+});
+
+ipcMain.handle('ocr:pickImages', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: '목차 페이지 이미지 선택 (여러 장 가능)',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: '이미지', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'gif'] }]
+  });
+  if (canceled) return [];
+  return filePaths.map(p => ({ path: p, name: path.basename(p) }));
+});
+
+// 한 장씩 처리한다 — 렌더러가 순회하며 진행 상황을 보여줄 수 있도록.
+ipcMain.handle('ocr:recognize', (_e, { path: p, lang }) => ocrEngine.recognizeFile(p, lang || 'ko'));
+
 // ─── IPC: 온라인 문헌 검색 (전부 선택 기능 · 실패해도 수동 입력 가능) ──────
 const UA = 'CODEX-Reader/1.0 (local desktop reading tracker)';
 

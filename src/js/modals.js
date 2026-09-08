@@ -3,6 +3,7 @@
 
 import { $, $$, esc, uid, modal, toast, ICON, initials, mountImageFallbacks } from './util.js';
 import { allTags, parseTOC, normalizeChapter, chapterPages } from './store.js';
+import { rowsFromPages, rowsToText, summarize } from './toc-ocr.js';
 
 const api = window.codex;
 
@@ -400,6 +401,28 @@ export function openTocEditor(current = [], note = '') {
           한 줄에 한 장씩 입력합니다. 쪽 범위는 <b class="mono">Chapter | 12-40</b> 또는 <b class="mono">Chapter ..... 12</b> 형태로 쓸 수 있고,
           줄 앞에 <b>공백 2칸</b>을 넣으면 하위 절이 됩니다. 쪽 범위를 모두 넣으면 진척도가 <b>쪽 수 기준</b>으로 계산됩니다.
         </div>
+        <div class="panel mb" data-ocrpanel hidden>
+          <div class="panel-head">
+            <span class="panel-title">IMAGE OCR</span>
+            <span class="muted" style="font-size:11px">Windows 내장 엔진 · 오프라인</span>
+          </div>
+          <div class="row wrap">
+            <button class="btn sm" data-ocrpick>${ICON.img}목차 사진 불러오기</button>
+            <select class="sel" data-ocrlang></select>
+            <label class="row gap-s" style="font-size:11.5px;color:var(--txt-2);cursor:pointer">
+              <input type="checkbox" data-ocrappend checked style="width:auto;accent-color:var(--cy)" />
+              기존 목차 뒤에 붙이기
+            </label>
+            <span class="muted grow" style="font-size:11.5px;text-align:right" data-ocrstatus></span>
+          </div>
+          <div class="hint mt-s">
+            책의 목차 페이지를 찍은 사진이나 스캔본을 넣으면 목차 초안을 만들어 줍니다.
+            여러 장을 한 번에 고를 수 있고, 고른 순서대로 이어 붙입니다.
+            <b>인식 결과는 완벽하지 않으니 아래 미리보기로 꼭 확인하세요.</b>
+            해상도가 낮으면 쪽번호가 누락되기 쉬워, 가로 2000px 이상으로 찍는 것이 좋습니다.
+          </div>
+        </div>
+
         <div class="two-col" style="grid-template-columns:1fr 1fr">
           <div class="field">
             <label>TOC TEXT</label>
@@ -443,11 +466,90 @@ export function openTocEditor(current = [], note = '') {
     ta.addEventListener('input', refresh);
     refresh();
 
+    mountOcr(m, ta, refresh);
+
     $('[data-clear]', m.root).onclick = () => { ta.value = ''; refresh(); };
     $('[data-cancel]', m.root).onclick = () => m.close();
     $('[data-ok]', m.root).onclick = () => { settled = true; m.close(); resolve(parsed); };
     setTimeout(() => ta.focus(), 60);
   });
+}
+
+// ─── 목차 편집기의 이미지 OCR ───────────────────────────────────────────────
+// OCR 을 쓸 수 없는 환경(언어 팩 없음 등)에서는 패널을 아예 띄우지 않는다.
+// 수동 입력 경로는 그대로 남아 있으므로 기능이 없어도 목차 등록에는 지장이 없다.
+async function mountOcr(m, ta, refresh) {
+  const panel = $('[data-ocrpanel]', m.body);
+  if (!panel) return;
+
+  let langs = [];
+  try { langs = await api.ocr.languages(); } catch { langs = []; }
+  if (!langs.length) return;              // 패널 숨김 유지
+
+  const sel = $('[data-ocrlang]', panel);
+  const preferred = ['ko', 'en-US', 'ja'];
+  langs.sort((a, b) => {
+    const ia = preferred.findIndex(p => a.tag.startsWith(p));
+    const ib = preferred.findIndex(p => b.tag.startsWith(p));
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  sel.innerHTML = langs.map(l => `<option value="${esc(l.tag)}">${esc(l.name)}</option>`).join('');
+  panel.hidden = false;
+
+  const status = $('[data-ocrstatus]', panel);
+  const btn = $('[data-ocrpick]', panel);
+  const appendBox = $('[data-ocrappend]', panel);
+
+  btn.onclick = async () => {
+    let files = [];
+    try { files = await api.ocr.pickImages(); } catch (e) { toast('이미지를 열지 못했습니다: ' + e.message, 'err'); return; }
+    if (!files.length) return;
+
+    btn.disabled = true;
+    const lang = sel.value;
+    const pages = [];
+    const failed = [];
+
+    for (let i = 0; i < files.length; i++) {
+      status.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px"></span> ${i + 1}/${files.length} — ${esc(files[i].name)} 인식 중…`;
+      try {
+        pages.push(await api.ocr.recognize(files[i].path, lang));
+      } catch (e) {
+        failed.push(`${files[i].name}: ${e.message}`);
+      }
+    }
+    btn.disabled = false;
+
+    if (!pages.length) {
+      status.textContent = '인식 실패';
+      toast('이미지를 인식하지 못했습니다. ' + (failed[0] || ''), 'err');
+      return;
+    }
+
+    const rows = rowsFromPages(pages);
+    if (!rows.length) {
+      status.textContent = '글자를 찾지 못했습니다';
+      toast('이미지에서 목차로 볼 만한 글자를 찾지 못했습니다. 더 밝고 큰 사진으로 다시 시도해 보세요.', 'err');
+      return;
+    }
+
+    const text = rowsToText(rows);
+    const keep = appendBox.checked && ta.value.trim();
+    ta.value = keep ? (ta.value.replace(/\s+$/, '') + '\n' + text) : text;
+    refresh();
+
+    const s = summarize(rows);
+    const upscaled = pages.filter(p => p.scaled > 1.05).length;
+    status.textContent = `${s.total}개 항목 인식 · 쪽번호 ${s.withPage}개`;
+    toast(
+      `목차 ${s.total}개 항목을 읽었습니다` +
+      (s.withoutPage ? ` (쪽번호 ${s.withoutPage}개 누락)` : '') +
+      (upscaled ? ` · 사진 ${upscaled}장은 자동 확대함` : '') +
+      '. 미리보기에서 확인하세요.',
+      'ok'
+    );
+    if (failed.length) toast(`${failed.length}장은 실패했습니다: ${failed[0]}`, 'err');
+  };
 }
 
 export function serializeTOC(toc) {
