@@ -443,6 +443,18 @@ select.sel option { background: var(--bg-2); color: var(--txt); }
 .toc-del { opacity: 0; transition: opacity .15s; }
 .toc-item:hover .toc-del { opacity: 1; }
 
+/* 장별 메모 / 옵시디언 노트 버튼 */
+.toc-note {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 6px; border: 1px solid transparent;
+  background: transparent; display: grid; place-items: center; cursor: pointer;
+  transition: all .16s; opacity: .28;
+}
+.toc-note svg { width: 13px; height: 13px; fill: none; stroke: var(--txt-3); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.toc-item:hover .toc-note { opacity: .8; border-color: var(--line); }
+.toc-note:hover { opacity: 1 !important; border-color: var(--line-2); background: rgba(255,255,255,.05); }
+.toc-note.on { opacity: 1; border-color: rgba(157,107,255,.45); background: rgba(157,107,255,.14); }
+.toc-note.on svg { stroke: #c3a6ff; }
+
 /* 발췌독 배너 -------------------------------------------------------- */
 .excerpt-bar {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

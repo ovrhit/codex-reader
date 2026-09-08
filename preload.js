@@ -46,6 +46,15 @@ contextBridge.exposeInMainWorld('codex', {
       return () => ipcRenderer.removeListener('ai:progress', h);
     }
   },
+  obsidian: {
+    status: () => ipcRenderer.invoke('obs:status'),
+    setConfig: (cfg) => ipcRenderer.invoke('obs:setConfig', cfg),
+    pickVault: () => ipcRenderer.invoke('obs:pickVault'),
+    listNotes: (opts) => ipcRenderer.invoke('obs:listNotes', opts),
+    readNote: (rel) => ipcRenderer.invoke('obs:readNote', rel),
+    createNote: (payload) => ipcRenderer.invoke('obs:createNote', payload),
+    openNote: (rel) => ipcRenderer.invoke('obs:openNote', rel)
+  },
   shell: {
     openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
     openExternal: (u) => ipcRenderer.invoke('shell:openExternal', u)

@@ -92,7 +92,9 @@ export function normalizeChapter(c) {
     from, to,
     read: !!c.read,
     readAt: c.readAt || null,
-    scope: c.scope !== false   // 기본은 '범위에 포함'
+    scope: c.scope !== false,  // 기본은 '범위에 포함'
+    note: c.note || '',        // 장별 메모
+    noteLink: c.noteLink || '' // 연결된 옵시디언 노트 (볼트 기준 상대 경로)
   };
 }
 

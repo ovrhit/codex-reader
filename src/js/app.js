@@ -8,6 +8,7 @@ import {
   chapterPages, normalizeWork
 } from './store.js';
 import { openWorkForm, openTocEditor, promptText } from './modals.js';
+import { openChapterNote } from './chapter-note.js';
 
 const api = window.codex;
 const content = $('#content');
@@ -354,6 +355,10 @@ function bookBodyHTML(w, p) {
             ${chapterPages(c) ? `<span class="toc-pages">${c.from}–${c.to} · ${chapterPages(c)}p</span>`
               : c.from != null ? `<span class="toc-pages">p.${c.from}</span>` : ''}
             ${w.excerptMode ? `<button class="toc-scope ${c.scope ? 'on' : ''}" data-scope="${c.id}" title="진척도 범위 포함/제외">${ICON.target}</button>` : ''}
+            <button class="toc-note ${c.note || c.noteLink ? 'on' : ''}" data-note="${c.id}"
+              title="${c.noteLink ? '노트 연결됨: ' + esc(c.noteLink) : (c.note ? '메모 있음' : '메모 / 옵시디언 노트')}">
+              ${c.noteLink ? ICON.link : ICON.note}
+            </button>
           </div>`).join('')}
       </div>
       <div class="divider"></div>
@@ -466,7 +471,7 @@ function wireDetail(w) {
 
   // 목차 체크
   $$('[data-ch]').forEach(row => row.onclick = e => {
-    if (e.target.closest('[data-scope]')) return;
+    if (e.target.closest('[data-scope]') || e.target.closest('[data-note]')) return;
     toggleChapter(w, row.dataset.ch);
     render();
   });
@@ -478,6 +483,18 @@ function wireDetail(w) {
     if (!c) return;
     c.scope = !c.scope;
     syncStatus(w);
+    render();
+  });
+
+  $$('[data-note]').forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const c = w.toc.find(x => x.id === b.dataset.note);
+    if (!c) return;
+    const r = await openChapterNote({ work: w, chapter: c });
+    if (!r) return;
+    c.note = r.note;
+    c.noteLink = r.noteLink;
+    save();
     render();
   });
 
@@ -687,6 +704,42 @@ function renderSettings() {
       </div>
     </div>
 
+    <div class="panel mb" data-obspanel>
+      <div class="panel-head">
+        <span class="panel-title">OBSIDIAN</span>
+        <span class="muted" style="font-size:11px">선택 기능</span>
+      </div>
+      <div class="notice mb">
+        책의 각 장에 옵시디언 노트를 연결합니다. 목차 줄의 노트 아이콘에서 노트를 새로 만들거나
+        기존 노트를 고를 수 있습니다. <b>새 노트는 아래에서 지정한 하위 폴더 안에만 만들어지고,
+        그 밖의 볼트 내용은 읽기만 합니다.</b> 기존 파일을 덮어쓰지 않습니다.
+      </div>
+      <div class="form-grid">
+        <div class="field full">
+          <label>VAULT</label>
+          <div class="row wrap">
+            <input type="text" data-obsvault readonly placeholder="연결된 볼트 없음" style="flex:1 1 320px" />
+            <button class="btn sm" data-obspick>${ICON.folder}폴더 선택</button>
+            <select class="sel" data-obsdetected></select>
+          </div>
+          <div class="hint" data-obshint></div>
+        </div>
+        <div class="field">
+          <label>SUBFOLDER</label>
+          <input type="text" data-obssub placeholder="CODEX" />
+          <div class="hint">노트를 만들 폴더. 이 안에만 씁니다.</div>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <div class="row wrap">
+            <button class="btn sm primary" data-obssave>${ICON.check}저장</button>
+            <button class="btn sm ghost danger" data-obsunlink>연결 해제</button>
+          </div>
+        </div>
+      </div>
+      <div class="row mt"><span class="muted grow" style="font-size:11.5px" data-obsstatus></span></div>
+    </div>
+
     <div class="panel mb" data-aipanel>
       <div class="panel-head">
         <span class="panel-title">AI TOC READER</span>
@@ -756,6 +809,7 @@ function renderSettings() {
   </div>`;
 
   $('[data-openfolder]').onclick = () => api.shell.openPath(state.paths.data);
+  wireObsidianSettings();
   wireAiSettings();
 
   $('[data-export]').onclick = async () => {
@@ -795,6 +849,72 @@ function renderSettings() {
     await save(); await flush();
     toast('서재를 비웠습니다.');
     go('library');
+  };
+}
+
+// ─── 설정: 옵시디언 볼트 ────────────────────────────────────────────────────
+async function wireObsidianSettings() {
+  const panel = $('[data-obspanel]');
+  if (!panel) return;
+
+  let st;
+  try { st = await api.obsidian.status(); }
+  catch { panel.remove(); return; }
+
+  const vaultInp = $('[data-obsvault]', panel);
+  const subInp = $('[data-obssub]', panel);
+  const detSel = $('[data-obsdetected]', panel);
+  const hint = $('[data-obshint]', panel);
+  const status = $('[data-obsstatus]', panel);
+
+  function paint() {
+    vaultInp.value = st.vaultPath || '';
+    subInp.value = st.subfolder || '';
+    // 옵시디언이 알고 있는 볼트를 골라 쓸 수 있게 한다
+    detSel.innerHTML = `<option value="">감지된 볼트에서 고르기…</option>`
+      + (st.detected || []).map(v => `<option value="${esc(v.path)}">${esc(v.name)}</option>`).join('');
+    detSel.hidden = !(st.detected || []).length;
+    hint.textContent = (st.detected || []).length
+      ? `옵시디언에 등록된 볼트 ${st.detected.length}개를 찾았습니다.`
+      : '옵시디언 설정을 읽지 못했습니다. 폴더를 직접 지정하세요.';
+    status.textContent = !st.linked ? '연결 안 됨 — 장별 메모는 앱 안에만 저장됩니다'
+      : st.writable ? `연결됨 · ${st.vaultName} / ${st.subfolder}`
+      : `연결됨 · 쓰기 불가 (권한을 확인하세요)`;
+  }
+  paint();
+
+  detSel.onchange = async () => {
+    if (!detSel.value) return;
+    try { st = await api.obsidian.setConfig({ vaultPath: detSel.value }); paint(); toast('볼트를 연결했습니다.', 'ok'); }
+    catch (e) { toast(cleanErr(e), 'err'); }
+  };
+
+  $('[data-obspick]', panel).onclick = async () => {
+    try {
+      st = await api.obsidian.pickVault();
+      paint();
+      if (st.warnNotAVault) toast('그 폴더에 .obsidian 이 없습니다. 볼트가 맞는지 확인하세요.', 'err');
+      else if (st.linked) toast('볼트를 연결했습니다.', 'ok');
+    } catch (e) { toast(cleanErr(e), 'err'); }
+  };
+
+  $('[data-obssave]', panel).onclick = async () => {
+    try {
+      st = await api.obsidian.setConfig({ subfolder: subInp.value.trim() });
+      paint();
+      toast('저장했습니다.', 'ok');
+    } catch (e) { toast(cleanErr(e), 'err'); }
+  };
+
+  $('[data-obsunlink]', panel).onclick = async () => {
+    const ok = await confirmDialog({
+      title: '볼트 연결 해제', danger: true, okText: '해제',
+      message: '볼트 연결만 끊습니다. 이미 만들어진 노트와 장별 메모는 그대로 남습니다.'
+    });
+    if (!ok) return;
+    st = await api.obsidian.setConfig({ vaultPath: '' });
+    paint();
+    toast('연결을 해제했습니다.');
   };
 }
 

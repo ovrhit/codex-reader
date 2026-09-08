@@ -185,7 +185,8 @@ ipcMain.handle('db:import', async () => {
 
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p || DATA_DIR));
 ipcMain.handle('shell:openExternal', (_e, url) => {
-  if (/^https?:\/\//i.test(url)) return shell.openExternal(url);
+  // 웹 링크와 옵시디언 노트 열기, 이 둘만 허용한다.
+  if (/^(https?|obsidian):\/\//i.test(url)) return shell.openExternal(url);
   return false;
 });
 
@@ -267,6 +268,17 @@ ipcMain.handle('ai:test', () => aiToc.testConnection());
 // 한도 초과로 기다리는 동안 화면이 멈춘 것처럼 보이지 않도록 진행 상황을 알린다.
 ipcMain.handle('ai:extractTOC', (e, p) =>
   aiToc.extractTOC(p, info => { if (!e.sender.isDestroyed()) e.sender.send('ai:progress', info); }));
+
+// ─── IPC: 옵시디언 볼트 연동 (선택 기능) ────────────────────────────────────
+const obsidian = require('./obsidian');
+
+ipcMain.handle('obs:status', () => obsidian.status());
+ipcMain.handle('obs:setConfig', (_e, cfg) => obsidian.setConfig(cfg || {}));
+ipcMain.handle('obs:pickVault', () => obsidian.pickVault());
+ipcMain.handle('obs:listNotes', (_e, opts) => obsidian.listNotes(opts || {}));
+ipcMain.handle('obs:readNote', (_e, rel) => obsidian.readNote(rel));
+ipcMain.handle('obs:createNote', (_e, payload) => obsidian.createChapterNote(payload || {}));
+ipcMain.handle('obs:openNote', (_e, rel) => obsidian.openNote(rel));
 
 // ─── IPC: 온라인 문헌 검색 (전부 선택 기능 · 실패해도 수동 입력 가능) ──────
 const UA = 'CODEX-Reader/1.0 (local desktop reading tracker)';
