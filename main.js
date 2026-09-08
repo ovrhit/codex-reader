@@ -71,6 +71,10 @@ function rollingBackup() {
 // ─── 창 ─────────────────────────────────────────────────────────────────────
 let win = null;
 
+// 패키징하면 아이콘이 exe 에 박히지만, 개발 중(`npm start`)에는 실행 파일이
+// electron.exe 라 기본 일렉트론 로고가 뜬다. 창에 직접 지정해 양쪽을 맞춘다.
+const WINDOW_ICON = path.join(__dirname, 'build', 'icon.ico');
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1420,
@@ -81,6 +85,7 @@ function createWindow() {
     frame: false,
     backgroundColor: '#05070d',
     title: 'CODEX',
+    ...(fs.existsSync(WINDOW_ICON) ? { icon: WINDOW_ICON } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
