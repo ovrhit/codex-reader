@@ -505,7 +505,15 @@ async function mountOcr(m, ta, refresh) {
   const aiBtn = $('[data-aipick]', panel);
   let aiCfg = null;
   try { aiCfg = await api.ai.getConfig(); } catch { /* noop */ }
-  if (aiCfg?.hasKey) {
+  if (!aiCfg?.hasKey) {
+    // 버튼만 조용히 숨기면 기능이 없어진 것처럼 보인다. 어디서 켜는지 알려 준다.
+    const hint = $('[data-ocrhint]', panel);
+    if (hint) {
+      hint.insertAdjacentHTML('beforeend',
+        ' <b>AI로 읽기</b>는 설정 → <b>AI TOC READER</b> 에서 API 키를 넣으면 켜집니다 — '
+        + 'Windows OCR 보다 훨씬 정확하고, Google Gemini 는 무료 티어로 쓸 수 있습니다.');
+    }
+  } else {
     aiBtn.hidden = false;
     aiBtn.title = `${aiCfg.providers?.[aiCfg.provider]?.label || aiCfg.provider} · ${aiCfg.model}`;
     aiBtn.onclick = async () => {
