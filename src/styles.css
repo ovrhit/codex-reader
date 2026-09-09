@@ -421,6 +421,25 @@ select.sel option { background: var(--bg-2); color: var(--txt); }
 .toc-item.out { opacity: .34; }
 .toc-item.done .toc-title { color: var(--txt-3); text-decoration: line-through; text-decoration-color: rgba(111,255,176,.5); }
 
+/* 상위 절 — 자식의 묶음이라 진척도 분모에 안 들어간다. 살짝 구분해 준다. */
+.toc-item.section .toc-title { font-weight: 700; }
+.toc-item.section .tick { border-radius: 7px; border-style: dashed; }
+
+/* 자식 일부만 읽은 상위 절 */
+.toc-item.partial .tick {
+  border-color: rgba(255,197,92,.55); background: rgba(255,197,92,.12); border-style: solid;
+}
+.toc-item.partial .tick::after {
+  content: ""; width: 9px; height: 2.5px; border-radius: 2px; background: var(--am);
+  box-shadow: 0 0 7px rgba(255,197,92,.7);
+}
+.toc-item.partial .tick svg { display: none; }
+
+/* 드래그로 범위를 고르는 중 */
+.toc-item.sel-preview { background: rgba(255,255,255,.05); border-color: var(--line-2); }
+.toc-item.sel-preview.sel-read { background: rgba(111,255,176,.1); border-color: rgba(111,255,176,.35); }
+.toc-item.sel-preview.sel-unread { background: rgba(255,107,129,.09); border-color: rgba(255,107,129,.32); }
+
 .tick {
   flex: 0 0 19px; width: 19px; height: 19px; border-radius: 5px;
   border: 1.6px solid var(--line-2); background: rgba(255,255,255,.03);

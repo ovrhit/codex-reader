@@ -24,21 +24,70 @@ function ensureDirs() {
   }
 }
 
-const EMPTY_DB = { version: 1, works: [], settings: { accent: 'cyan' }, updatedAt: null };
+// 저장 형식 버전. 형식을 바꿀 때만 올린다.
+//  - 파일 버전이 이보다 낮으면: 올리기 전에 스냅샷을 남긴다.
+//  - 파일 버전이 이보다 높으면: 더 새 버전의 앱이 쓴 파일이므로 읽기 전용으로 다룬다.
+//    (구버전 앱이 모르는 필드를 지우며 덮어쓰는 사고를 막는다)
+const SCHEMA_VERSION = 2;
+
+const EMPTY_DB = { version: SCHEMA_VERSION, works: [], settings: { accent: 'cyan' }, updatedAt: null };
+
+let dbReadOnly = false;      // 파일이 더 새 형식일 때 켜진다
+let dbReadOnlyReason = '';
+
+/**
+ * 지금 상태를 백업 폴더에 남긴다.
+ * once 를 주면 같은 tag 의 스냅샷이 이미 있을 때 건너뛴다 — 형식 올리기는
+ * 저장이 일어나야 파일에 반영되므로, 그 전에 앱을 여러 번 열면 같은 스냅샷이
+ * 계속 쌓인다. 형식 올리기 직전 상태는 하나면 충분하다.
+ */
+function snapshot(tag, { once = false } = {}) {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return null;
+    if (once) {
+      const existing = fs.readdirSync(BACKUP_DIR).find(f => f.startsWith(`library-${tag}-`));
+      if (existing) return path.join(BACKUP_DIR, existing);
+    }
+    const p = path.join(BACKUP_DIR, `library-${tag}-${Date.now()}.json`);
+    fs.copyFileSync(DATA_FILE, p);
+    return p;
+  } catch { return null; }
+}
 
 function readDB() {
   ensureDirs();
+  dbReadOnly = false;
+  dbReadOnlyReason = '';
+
   if (!fs.existsSync(DATA_FILE)) return structuredClone(EMPTY_DB);
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     const db = JSON.parse(raw);
     if (!db || typeof db !== 'object' || !Array.isArray(db.works)) return structuredClone(EMPTY_DB);
+
+    const fileVersion = Number(db.version) || 1;
+    if (fileVersion > SCHEMA_VERSION) {
+      // 더 새 버전 앱이 만든 파일. 여기서 저장하면 모르는 필드가 날아간다.
+      dbReadOnly = true;
+      dbReadOnlyReason =
+        `이 기록은 더 새 버전(형식 v${fileVersion})의 CODEX 가 만든 것입니다. `
+        + `지금 앱(형식 v${SCHEMA_VERSION})은 내용을 지울 수 있어 저장하지 않습니다. `
+        + `최신 버전으로 업데이트하세요.`;
+    } else if (fileVersion < SCHEMA_VERSION) {
+      // 형식을 올리기 전에 원본을 남겨 둔다.
+      snapshot(`pre-v${SCHEMA_VERSION}`, { once: true });
+      db.version = SCHEMA_VERSION;
+    }
+
     db.settings = Object.assign({}, EMPTY_DB.settings, db.settings || {});
     return db;
   } catch (err) {
     // 손상된 파일은 덮어쓰지 않고 따로 보관한다.
     const broken = path.join(BACKUP_DIR, `corrupt-${Date.now()}.json`);
     try { fs.copyFileSync(DATA_FILE, broken); } catch { /* noop */ }
+    dbReadOnly = true;
+    dbReadOnlyReason = `기록 파일을 읽지 못해 ${path.basename(broken)} 로 보관했습니다. `
+      + `덮어쓰지 않도록 저장을 막아 두었습니다.`;
     return structuredClone(EMPTY_DB);
   }
 }
@@ -47,7 +96,9 @@ let saveTimer = null;
 let pendingDB = null;
 
 function writeDBSync(db) {
+  if (dbReadOnly) throw new Error(dbReadOnlyReason || '지금은 저장할 수 없습니다.');
   ensureDirs();
+  db.version = SCHEMA_VERSION;
   db.updatedAt = new Date().toISOString();
   const tmp = DATA_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8');
@@ -55,16 +106,31 @@ function writeDBSync(db) {
   return db.updatedAt;
 }
 
-// 하루 한 번 자동 백업 (최근 20개 유지)
+// 하루 한 번 자동 백업 (최근 20개 유지).
+// 서재뿐 아니라 설정 파일도 함께 넣는다 — API 키나 볼트 설정이 날아가면
+// 서재만 있어봐야 원래 상태로 못 돌아온다.
+const CONFIG_FILES = ['ai-config.json', 'obsidian.json'];
+
 function rollingBackup() {
   try {
     if (!fs.existsSync(DATA_FILE)) return;
     const stamp = new Date().toISOString().slice(0, 10);
     const target = path.join(BACKUP_DIR, `library-${stamp}.json`);
-    if (fs.existsSync(target)) return;
-    fs.copyFileSync(DATA_FILE, target);
-    const files = fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith('library-')).sort();
-    while (files.length > 20) fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
+    if (!fs.existsSync(target)) fs.copyFileSync(DATA_FILE, target);
+
+    for (const name of CONFIG_FILES) {
+      const src = path.join(DATA_DIR, name);
+      if (!fs.existsSync(src)) continue;
+      const dst = path.join(BACKUP_DIR, `${name.replace(/\.json$/, '')}-${stamp}.json`);
+      if (!fs.existsSync(dst)) fs.copyFileSync(src, dst);
+    }
+
+    // 종류별로 최근 20개만 남긴다
+    const all = fs.readdirSync(BACKUP_DIR);
+    for (const prefix of ['library-', 'ai-config-', 'obsidian-']) {
+      const files = all.filter(f => f.startsWith(prefix) && /\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+      while (files.length > 20) fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
+    }
   } catch { /* 백업 실패가 앱을 막지 않도록 */ }
 }
 
@@ -146,7 +212,14 @@ ipcMain.handle('window:toggleMaximize', () => {
 ipcMain.handle('window:close', () => win && win.close());
 
 // ─── IPC: 데이터 ────────────────────────────────────────────────────────────
-ipcMain.handle('db:load', () => ({ db: readDB(), paths: { data: DATA_DIR, file: DATA_FILE, covers: COVER_DIR } }));
+ipcMain.handle('db:load', () => {
+  const db = readDB();
+  return {
+    db,
+    paths: { data: DATA_DIR, file: DATA_FILE, covers: COVER_DIR, backups: BACKUP_DIR },
+    schema: { version: SCHEMA_VERSION, readOnly: dbReadOnly, reason: dbReadOnlyReason }
+  };
+});
 
 ipcMain.handle('db:save', (_e, db) => {
   pendingDB = db;
@@ -185,7 +258,9 @@ ipcMain.handle('db:import', async () => {
   const raw = await fsp.readFile(filePaths[0], 'utf8');
   const parsed = JSON.parse(raw);
   if (!parsed || !Array.isArray(parsed.works)) throw new Error('올바른 CODEX 백업 파일이 아닙니다.');
-  return { ok: true, db: parsed, path: filePaths[0] };
+  // 덮어쓰기 전에 현재 상태를 남겨 둔다.
+  const snap = snapshot('pre-import');
+  return { ok: true, db: parsed, path: filePaths[0], snapshot: snap ? path.basename(snap) : null };
 });
 
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p || DATA_DIR));

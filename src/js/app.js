@@ -5,7 +5,7 @@ import { $, $$, esc, fmtDate, daysBetween, toast, confirmDialog, ensureDefs, cov
 import {
   state, loadDB, save, flush, resolveCovers, getWork, addWork, deleteWork,
   progressOf, syncStatus, setStatus, toggleChapter, allTags, visibleWorks, computeStats,
-  chapterPages, normalizeWork
+  chapterPages, normalizeWork, chapterState, isLeaf, setChaptersRead, chapterIdsBetween
 } from './store.js';
 import { openWorkForm, openTocEditor, promptText } from './modals.js';
 import { openChapterNote } from './chapter-note.js';
@@ -330,6 +330,12 @@ function bookBodyHTML(w, p) {
       </div>
     </div>
 
+    ${toc.length ? `<div class="hint mb" style="font-size:11.5px">
+      상위 절을 누르면 그 아래가 전부 함께 바뀝니다. 여러 줄에 걸쳐 <b>드래그</b>하거나
+      <b>Shift+클릭</b> 하면 범위로 선택됩니다.
+      ${p.sections ? `진척도는 실제 읽는 단위인 <b>최하위 항목 ${p.total}개</b>로만 계산합니다 (상위 절 ${p.sections}개는 분모에서 제외).` : ''}
+    </div>` : ''}
+
     <div class="excerpt-bar ${w.excerptMode ? '' : 'off'}">
       <div class="switch ${w.excerptMode ? 'on' : ''}" data-excerpt role="switch" aria-checked="${w.excerptMode}"></div>
       <div>
@@ -347,8 +353,12 @@ function bookBodyHTML(w, p) {
 
     ${toc.length ? `
       <div class="toc-list">
-        ${toc.map((c, i) => `
-          <div class="toc-item lvl${c.level} ${c.read ? 'done' : ''} ${inScope(c) ? '' : 'out'}" data-ch="${c.id}">
+        ${toc.map((c, i) => {
+          const st = chapterState(w, c);
+          const leaf = isLeaf(toc, i);
+          return `
+          <div class="toc-item lvl${c.level} ${st === 'read' ? 'done' : ''} ${st === 'partial' ? 'partial' : ''} ${leaf ? '' : 'section'} ${inScope(c) ? '' : 'out'}"
+               data-ch="${c.id}" data-leaf="${leaf ? 1 : 0}">
             <div class="tick">${ICON.check}</div>
             <span class="toc-num">${String(i + 1).padStart(2, '0')}</span>
             <span class="toc-title">${esc(c.title)}</span>
@@ -359,13 +369,14 @@ function bookBodyHTML(w, p) {
               title="${c.noteLink ? '노트 연결됨: ' + esc(c.noteLink) : (c.note ? '메모 있음' : '메모 / 옵시디언 노트')}">
               ${c.noteLink ? ICON.link : ICON.note}
             </button>
-          </div>`).join('')}
+          </div>`; }).join('')}
       </div>
       <div class="divider"></div>
       <div class="row mono muted" style="font-size:11.5px">
         <span>${p.mode === 'pages' ? 'PAGE-WEIGHTED' : 'CHAPTER-COUNT'}</span>
         <span class="sep">·</span>
         <span>CHAPTERS ${p.read} / ${p.total}</span>
+        ${p.sections ? `<span class="sep">·</span><span>${p.sections} SECTIONS EXCLUDED</span>` : ''}
         ${p.pages ? `<span class="sep">·</span><span>PAGES ${p.pages.done} / ${p.pages.total}</span>` : ''}
         ${p.outOfScope ? `<span class="sep">·</span><span>${p.outOfScope} OUT OF SCOPE</span>` : ''}
       </div>`
@@ -469,12 +480,77 @@ function wireDetail(w) {
 
   if (w.type !== 'book') return;
 
-  // 목차 체크
-  $$('[data-ch]').forEach(row => row.onclick = e => {
-    if (e.target.closest('[data-scope]') || e.target.closest('[data-note]')) return;
-    toggleChapter(w, row.dataset.ch);
-    render();
+  // ── 목차 체크: 단일 클릭 · Shift 범위 · 드래그 범위 ─────────────────────
+  // 마지막으로 누른 줄. Shift+클릭의 기준점이 된다.
+  let anchorId = wireDetail._anchor || null;
+  let drag = null;   // { fromId, toId, read } — 드래그 중일 때만
+
+  const rows = $$('[data-ch]');
+  const idAt = el => el?.dataset?.ch || null;
+  const rowOf = e => e.target.closest('[data-ch]');
+  const onControl = e => e.target.closest('[data-scope]') || e.target.closest('[data-note]');
+
+  /** 드래그 범위를 화면에만 미리 칠한다 (실제 반영은 mouseup 에서). */
+  function paintPreview(fromId, toId, read) {
+    const ids = new Set(chapterIdsBetween(w, fromId, toId));
+    rows.forEach(r => {
+      const on = ids.has(r.dataset.ch);
+      r.classList.toggle('sel-preview', on);
+      r.classList.toggle('sel-read', on && read);
+      r.classList.toggle('sel-unread', on && !read);
+    });
+  }
+  function clearPreview() {
+    rows.forEach(r => r.classList.remove('sel-preview', 'sel-read', 'sel-unread'));
+  }
+
+  rows.forEach(row => {
+    row.addEventListener('mousedown', e => {
+      if (e.button !== 0 || onControl(e)) return;
+      const id = idAt(row);
+      if (e.shiftKey && anchorId) return;      // Shift 는 click 에서 처리
+      // 드래그 시작. 기준 줄의 '다음 상태'를 범위 전체에 적용한다.
+      const c = w.toc.find(x => x.id === id);
+      const read = chapterState(w, c) !== 'read';
+      drag = { fromId: id, toId: id, read, moved: false };
+    });
+
+    row.addEventListener('mouseenter', () => {
+      if (!drag) return;
+      drag.toId = idAt(row);
+      if (drag.toId !== drag.fromId) drag.moved = true;
+      paintPreview(drag.fromId, drag.toId, drag.read);
+    });
+
+    row.addEventListener('click', e => {
+      if (onControl(e)) return;
+      const id = idAt(row);
+      if (e.shiftKey && anchorId && anchorId !== id) {
+        const ids = chapterIdsBetween(w, anchorId, id);
+        const c = w.toc.find(x => x.id === id);
+        setChaptersRead(w, ids, chapterState(w, c) !== 'read');
+        anchorId = id; wireDetail._anchor = id;
+        render();
+        return;
+      }
+      if (drag && drag.moved) return;          // 드래그였으면 클릭은 무시
+      toggleChapter(w, id);
+      anchorId = id; wireDetail._anchor = id;
+      render();
+    });
   });
+
+  // 드래그가 목차 밖에서 끝나도 확실히 마무리되도록 document 에 건다.
+  const endDrag = () => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    clearPreview();
+    if (!d.moved) return;                      // 제자리 클릭은 click 이 처리
+    setChaptersRead(w, chapterIdsBetween(w, d.fromId, d.toId), d.read);
+    anchorId = d.toId; wireDetail._anchor = d.toId;
+    render();
+  };
+  document.addEventListener('mouseup', endDrag, { once: true });
 
   // 발췌 범위 토글
   $$('[data-scope]').forEach(b => b.onclick = e => {

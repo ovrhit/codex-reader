@@ -50,8 +50,11 @@ export async function resolveCovers() {
 }
 
 // ─── 정규화 ────────────────────────────────────────────────────────────────
+// 아는 필드만 골라 새 객체를 만들면, 더 새 버전이 추가한 필드가 저장할 때마다
+// 조용히 사라진다. 원본을 먼저 펼쳐 두고 아는 필드만 덮어써서 나머지를 보존한다.
 export function normalizeWork(w) {
   const o = {
+    ...w,
     id: w.id || uid(),
     type: w.type === 'book' ? 'book' : 'paper',
     title: w.title || '(제목 없음)',
@@ -86,6 +89,7 @@ export function normalizeChapter(c) {
   const from = numOrNull(c.from);
   const to = numOrNull(c.to);
   return {
+    ...c,
     id: c.id || uid(),
     title: c.title || '',
     level: Math.max(0, Math.min(2, Number(c.level) || 0)),
@@ -132,6 +136,58 @@ export function deleteWork(id) {
   return true;
 }
 
+// ─── 목차 계층 ──────────────────────────────────────────────────────────────
+// level 값의 흐름으로 부모–자식을 읽어낸다. 어떤 항목의 자식은, 바로 뒤에서
+// level 이 더 큰 동안 이어지는 항목들이다.
+//
+// 진척도를 셀 때 부모와 자식을 똑같이 한 개로 세면 안 된다. "1장"과 그 아래
+// "1.1", "1.2" 를 각각 하나로 세면 같은 내용을 두 번 세는 셈이고, 장 개수도
+// 실제 읽을거리보다 부풀려진다. 그래서 세는 단위는 항상 **잎(leaf)** 이다.
+
+/** 각 항목의 자식 인덱스 목록. i 번째 항목의 직속·간접 자식 전부. */
+export function descendantsOf(toc, index) {
+  const out = [];
+  const base = toc[index]?.level ?? 0;
+  for (let i = index + 1; i < toc.length; i++) {
+    if ((toc[i].level ?? 0) <= base) break;
+    out.push(i);
+  }
+  return out;
+}
+
+/** 자식이 없는 항목(= 실제로 읽는 단위)인지. */
+export function isLeaf(toc, index) {
+  const next = toc[index + 1];
+  return !next || (next.level ?? 0) <= (toc[index].level ?? 0);
+}
+
+/** 목차의 잎 항목들. 목차가 평평하면 전부가 잎이다. */
+export function leavesOf(toc) {
+  return (toc || []).filter((_, i) => isLeaf(toc, i));
+}
+
+/**
+ * 상위 항목의 표시 상태를 자식으로부터 끌어낸다.
+ * 잎이면 자기 자신의 read 값, 아니면 자식들의 상태에 따라 read / partial / unread.
+ */
+export function chapterState(w, chapter) {
+  const toc = w.toc || [];
+  const i = toc.indexOf(chapter);
+  if (i < 0) return chapter.read ? 'read' : 'unread';
+  if (isLeaf(toc, i)) return chapter.read ? 'read' : 'unread';
+
+  const kids = descendantsOf(toc, i).map(k => toc[k]).filter((_, ki, arr) => true);
+  const leaves = kids.filter(c => isLeaf(toc, toc.indexOf(c)));
+  const pool = leaves.length ? leaves : kids;
+  const inScope = w.excerptMode ? pool.filter(c => c.scope) : pool;
+  if (!inScope.length) return chapter.read ? 'read' : 'unread';
+
+  const done = inScope.filter(c => c.read).length;
+  if (done === 0) return 'unread';
+  if (done === inScope.length) return 'read';
+  return 'partial';
+}
+
 // ─── 진척도 ────────────────────────────────────────────────────────────────
 export function chapterPages(c) {
   if (c.from == null || c.to == null) return 0;
@@ -141,20 +197,24 @@ export function chapterPages(c) {
 
 /**
  * 책 진척도.
- * - 발췌독 모드면 scope=true 인 장만 분모에 넣는다.
- * - 범위 안 모든 장에 쪽수가 있으면 '쪽 수 가중', 아니면 '장 개수'로 계산한다.
+ * - 세는 단위는 **잎 항목**이다. 상위 절은 자식의 묶음일 뿐이라 분모에 넣지 않는다.
+ *   ("1장"과 그 아래 "1.1", "1.2" 를 셋으로 세면 같은 내용을 두 번 세게 된다.)
+ * - 발췌독 모드면 scope=true 인 잎만 분모에 넣는다.
+ * - 범위 안 모든 잎에 쪽수가 있으면 '쪽 수 가중', 아니면 '잎 개수'로 계산한다.
  */
 export function progressOf(w) {
   if (w.type === 'paper') {
     return { pct: w.status === 'read' ? 100 : 0, mode: 'binary', read: 0, total: 0, pages: null };
   }
   const items = w.toc || [];
-  const scoped = w.excerptMode ? items.filter(c => c.scope) : items;
+  const leaves = leavesOf(items);
+  const scoped = w.excerptMode ? leaves.filter(c => c.scope) : leaves;
 
   if (!scoped.length) {
     return {
       pct: w.status === 'read' ? 100 : (w.manualProgress || 0),
-      mode: 'manual', read: 0, total: 0, pages: null
+      mode: 'manual', read: 0, total: 0, pages: null,
+      excerpt: !!w.excerptMode, outOfScope: 0, sections: items.length - leaves.length
     };
   }
   const readItems = scoped.filter(c => c.read);
@@ -177,7 +237,8 @@ export function progressOf(w) {
     total: scoped.length,
     pages,
     excerpt: !!w.excerptMode,
-    outOfScope: items.length - scoped.length
+    outOfScope: leaves.length - scoped.length,
+    sections: items.length - leaves.length   // 분모에서 빠진 상위 절 수
   };
 }
 
@@ -219,12 +280,55 @@ export function setStatus(w, status) {
   return w;
 }
 
+/** 한 항목의 읽음 상태를 정한다. 상위 절이면 아래 전부에 같은 값을 적용한다. */
+function applyRead(w, index, read) {
+  const toc = w.toc || [];
+  const now = new Date().toISOString();
+  const targets = [index, ...descendantsOf(toc, index)];
+  for (const i of targets) {
+    const c = toc[i];
+    // 발췌독 모드에서 범위 밖 항목은 건드리지 않는다.
+    if (w.excerptMode && !c.scope && i !== index) continue;
+    c.read = read;
+    c.readAt = read ? (c.readAt || now) : null;
+  }
+  return targets;
+}
+
+/**
+ * 목차 항목 하나를 토글한다.
+ * 상위 절을 누르면 그 아래 모든 항목이 함께 따라간다 — 절반만 읽은 상태면 전부 읽음으로.
+ */
 export function toggleChapter(w, chapterId) {
-  const c = (w.toc || []).find(x => x.id === chapterId);
-  if (!c) return;
-  c.read = !c.read;
-  c.readAt = c.read ? new Date().toISOString() : null;
+  const toc = w.toc || [];
+  const i = toc.findIndex(x => x.id === chapterId);
+  if (i < 0) return;
+
+  const state = chapterState(w, toc[i]);
+  // 일부만 읽은 상위 절은 '전부 읽음'으로 채우는 게 자연스럽다.
+  const next = state !== 'read';
+  applyRead(w, i, next);
   syncStatus(w);
+}
+
+/** 여러 항목을 한 번에 같은 값으로 (드래그·Shift 선택용). */
+export function setChaptersRead(w, chapterIds, read) {
+  const toc = w.toc || [];
+  for (const id of chapterIds) {
+    const i = toc.findIndex(x => x.id === id);
+    if (i >= 0) applyRead(w, i, read);
+  }
+  syncStatus(w);
+}
+
+/** 두 항목 사이의 모든 항목 id (화면 순서 기준). */
+export function chapterIdsBetween(w, idA, idB) {
+  const toc = w.toc || [];
+  const a = toc.findIndex(x => x.id === idA);
+  const b = toc.findIndex(x => x.id === idB);
+  if (a < 0 || b < 0) return [];
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  return toc.slice(lo, hi + 1).map(c => c.id);
 }
 
 // ─── 태그 ──────────────────────────────────────────────────────────────────
@@ -276,7 +380,8 @@ export function computeStats() {
   const readDates = [];
 
   for (const w of books) {
-    for (const c of (w.toc || [])) {
+    // 상위 절은 자식의 묶음이므로 세지 않는다 (progressOf 와 같은 기준).
+    for (const c of leavesOf(w.toc || [])) {
       const inScope = !w.excerptMode || c.scope;
       if (inScope) chaptersTotal++;
       if (c.read) {
