@@ -459,6 +459,14 @@ select.sel option { background: var(--bg-2); color: var(--txt); }
 .toc-scope svg { width: 12px; height: 12px; fill: none; stroke: var(--txt-3); stroke-width: 2; }
 .toc-scope.on { border-color: rgba(255,197,92,.5); background: rgba(255,197,92,.14); }
 .toc-scope.on svg { stroke: var(--am); }
+/* 자식 일부만 범위에 든 상위 절 */
+.toc-scope.partial { border-color: rgba(255,197,92,.4); background: rgba(255,197,92,.06); }
+.toc-scope.partial svg { stroke: var(--am); opacity: .5; }
+.toc-scope.partial::after {
+  content: ""; position: absolute; right: 2px; bottom: 2px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--am);
+}
+.toc-scope { position: relative; }
 .toc-del { opacity: 0; transition: opacity .15s; }
 .toc-item:hover .toc-del { opacity: 1; }
 

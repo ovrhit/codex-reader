@@ -166,8 +166,13 @@ export function leavesOf(toc) {
   return (toc || []).filter((_, i) => isLeaf(toc, i));
 }
 
+/** 어떤 항목 아래의 잎 항목 인덱스들. 자손이 있으면 그 중 잎은 반드시 하나 이상 있다. */
+function leafDescendants(toc, index) {
+  return descendantsOf(toc, index).filter(k => isLeaf(toc, k));
+}
+
 /**
- * 상위 항목의 표시 상태를 자식으로부터 끌어낸다.
+ * 상위 항목의 '읽음' 표시 상태를 자식으로부터 끌어낸다.
  * 잎이면 자기 자신의 read 값, 아니면 자식들의 상태에 따라 read / partial / unread.
  */
 export function chapterState(w, chapter) {
@@ -176,16 +181,44 @@ export function chapterState(w, chapter) {
   if (i < 0) return chapter.read ? 'read' : 'unread';
   if (isLeaf(toc, i)) return chapter.read ? 'read' : 'unread';
 
-  const kids = descendantsOf(toc, i).map(k => toc[k]).filter((_, ki, arr) => true);
-  const leaves = kids.filter(c => isLeaf(toc, toc.indexOf(c)));
-  const pool = leaves.length ? leaves : kids;
-  const inScope = w.excerptMode ? pool.filter(c => c.scope) : pool;
-  if (!inScope.length) return chapter.read ? 'read' : 'unread';
+  let pool = leafDescendants(toc, i).map(k => toc[k]);
+  if (w.excerptMode) pool = pool.filter(c => c.scope);
+  if (!pool.length) return chapter.read ? 'read' : 'unread';
 
-  const done = inScope.filter(c => c.read).length;
+  const done = pool.filter(c => c.read).length;
   if (done === 0) return 'unread';
-  if (done === inScope.length) return 'read';
+  if (done === pool.length) return 'read';
   return 'partial';
+}
+
+/**
+ * 발췌 범위 상태도 같은 방식으로 끌어낸다 — in / partial / out.
+ * 읽음 쪽만 계층을 따르고 범위는 안 따르면 상위 절을 눌렀을 때 아래가 그대로 남는다.
+ */
+export function chapterScopeState(w, chapter) {
+  const toc = w.toc || [];
+  const i = toc.indexOf(chapter);
+  if (i < 0) return chapter.scope ? 'in' : 'out';
+  if (isLeaf(toc, i)) return chapter.scope ? 'in' : 'out';
+
+  const pool = leafDescendants(toc, i).map(k => toc[k]);
+  if (!pool.length) return chapter.scope ? 'in' : 'out';
+
+  const n = pool.filter(c => c.scope).length;
+  if (n === 0) return 'out';
+  if (n === pool.length) return 'in';
+  return 'partial';
+}
+
+/** 발췌 범위 토글. 상위 절이면 그 아래 전부 함께 바꾼다. */
+export function toggleScope(w, chapterId) {
+  const toc = w.toc || [];
+  const i = toc.findIndex(x => x.id === chapterId);
+  if (i < 0) return;
+  // 일부만 포함된 상위 절은 '전부 포함'으로 채운다 (읽음 토글과 같은 규칙).
+  const next = chapterScopeState(w, toc[i]) !== 'in';
+  for (const k of [i, ...descendantsOf(toc, i)]) toc[k].scope = next;
+  syncStatus(w);
 }
 
 // ─── 진척도 ────────────────────────────────────────────────────────────────

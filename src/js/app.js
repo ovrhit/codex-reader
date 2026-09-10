@@ -5,7 +5,8 @@ import { $, $$, esc, fmtDate, daysBetween, toast, confirmDialog, ensureDefs, cov
 import {
   state, loadDB, save, flush, resolveCovers, getWork, addWork, deleteWork,
   progressOf, syncStatus, setStatus, toggleChapter, allTags, visibleWorks, computeStats,
-  chapterPages, normalizeWork, chapterState, isLeaf, setChaptersRead, chapterIdsBetween
+  chapterPages, normalizeWork, chapterState, isLeaf, setChaptersRead, chapterIdsBetween,
+  chapterScopeState, toggleScope
 } from './store.js';
 import { openWorkForm, openTocEditor, promptText } from './modals.js';
 import { openChapterNote } from './chapter-note.js';
@@ -317,7 +318,8 @@ function renderDetail(w) {
 
 function bookBodyHTML(w, p) {
   const toc = w.toc || [];
-  const inScope = c => !w.excerptMode || c.scope;
+  // 상위 절은 자식 중 하나라도 범위에 있으면 흐리게 하지 않는다.
+  const inScope = c => !w.excerptMode || chapterScopeState(w, c) !== 'out';
 
   return `
   <div class="panel">
@@ -364,7 +366,12 @@ function bookBodyHTML(w, p) {
             <span class="toc-title">${esc(c.title)}</span>
             ${chapterPages(c) ? `<span class="toc-pages">${c.from}–${c.to} · ${chapterPages(c)}p</span>`
               : c.from != null ? `<span class="toc-pages">p.${c.from}</span>` : ''}
-            ${w.excerptMode ? `<button class="toc-scope ${c.scope ? 'on' : ''}" data-scope="${c.id}" title="진척도 범위 포함/제외">${ICON.target}</button>` : ''}
+            ${w.excerptMode ? (() => {
+              const sc = chapterScopeState(w, c);
+              const label = leaf ? (sc === 'in' ? '범위에서 제외' : '범위에 포함')
+                : (sc === 'in' ? '이 절 전체를 범위에서 제외' : sc === 'partial' ? '이 절 전체를 범위에 포함 (지금은 일부만)' : '이 절 전체를 범위에 포함');
+              return `<button class="toc-scope ${sc === 'in' ? 'on' : ''} ${sc === 'partial' ? 'partial' : ''}" data-scope="${c.id}" title="${label}">${ICON.target}</button>`;
+            })() : ''}
             <button class="toc-note ${c.note || c.noteLink ? 'on' : ''}" data-note="${c.id}"
               title="${c.noteLink ? '노트 연결됨: ' + esc(c.noteLink) : (c.note ? '메모 있음' : '메모 / 옵시디언 노트')}">
               ${c.noteLink ? ICON.link : ICON.note}
@@ -555,10 +562,7 @@ function wireDetail(w) {
   // 발췌 범위 토글
   $$('[data-scope]').forEach(b => b.onclick = e => {
     e.stopPropagation();
-    const c = w.toc.find(x => x.id === b.dataset.scope);
-    if (!c) return;
-    c.scope = !c.scope;
-    syncStatus(w);
+    toggleScope(w, b.dataset.scope);   // 상위 절이면 그 아래 전부 함께
     render();
   });
 
